@@ -1,4 +1,4 @@
-# Kanji scan app
+# Kanji Recognition
 
 Generated with BLACKBOX AI Builder
 

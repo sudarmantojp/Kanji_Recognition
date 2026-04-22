@@ -1,6 +1,5 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
 const _geist = Geist({ subsets: ["latin"] });
@@ -36,9 +35,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className="bg-background">
+      <head>
+        {/* kuromoji.js — Japanese morphological analyzer, loaded as global window.kuromoji */}
+        {/* Used as fallback tokenizer when AI furigana is unavailable */}
+        <script
+          src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"
+          async
+        />
+      </head>
       <body className="font-sans antialiased">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
   )

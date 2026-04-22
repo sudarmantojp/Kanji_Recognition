@@ -5,21 +5,7 @@ import { ChevronDown, ChevronUp, Copy, Check, BookOpen, List, Languages } from '
 import { Button } from '@/components/ui/button'
 import { FuriganaText } from '@/components/furigana-text'
 import { SegmentCard } from '@/components/segment-card'
-
-interface Segment {
-  kanji: string
-  furigana: string
-  romaji: string
-  meaning: string
-  type: string
-}
-
-interface ScanResult {
-  detected_text: string
-  segments: Segment[]
-  translation: string
-  language_notes?: string
-}
+import type { ScanResult } from '@/hooks/use-kanji-scan'
 
 interface ResultsPanelProps {
   result: ScanResult

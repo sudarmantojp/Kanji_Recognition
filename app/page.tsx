@@ -5,21 +5,7 @@ import { BookOpen, ScanLine, History, Info } from 'lucide-react'
 import { CameraScanner } from '@/components/camera-scanner'
 import { ResultsPanel } from '@/components/results-panel'
 import { HistoryPanel } from '@/components/history-panel'
-
-interface Segment {
-  kanji: string
-  furigana: string
-  romaji: string
-  meaning: string
-  type: string
-}
-
-interface ScanResult {
-  detected_text: string
-  segments: Segment[]
-  translation: string
-  language_notes?: string
-}
+import { scanKanji, type ScanResult } from '@/hooks/use-kanji-scan'
 
 interface HistoryItem {
   id: string
@@ -29,6 +15,7 @@ interface HistoryItem {
   thumbnail?: string
   result: ScanResult
   image?: string
+  annotatedImage?: string
 }
 
 type Tab = 'scan' | 'result' | 'history'
@@ -69,31 +56,25 @@ export default function KanjiScannerPage() {
     setCurrentImage(imageBase64)
 
     try {
-      const response = await fetch('/api/scan-kanji', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64 }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok || data.error) {
-        throw new Error(data.error || 'Failed to analyze image')
+      const result = await scanKanji(imageBase64)
+      // If annotated image was produced, use it as the display image
+      if (result.annotatedImage) {
+        setCurrentImage(result.annotatedImage)
       }
-
-      const result: ScanResult = data
       setCurrentResult(result)
 
       // Add to history
       const id = crypto.randomUUID()
+      const displayImage = result.annotatedImage || imageBase64
       const newItem: HistoryItem = {
         id,
         detected_text: result.detected_text || '(no text)',
         translation: result.translation || '',
         timestamp: Date.now(),
-        thumbnail: imageBase64.substring(0, 3000),
+        thumbnail: displayImage.substring(0, 3000),
         result,
         image: imageBase64,
+        annotatedImage: result.annotatedImage,
       }
       const updated = [newItem, ...history]
       setHistory(updated)
@@ -113,7 +94,7 @@ export default function KanjiScannerPage() {
     const item = history.find((h) => h.id === id)
     if (item) {
       setCurrentResult(item.result)
-      setCurrentImage(item.image)
+      setCurrentImage(item.annotatedImage || item.image)
       setActiveHistoryId(id)
       setActiveTab('result')
     }

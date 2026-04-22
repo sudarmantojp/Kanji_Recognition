@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Kanji Scanner - Furigana Reader</title>
+  <!-- kuromoji.js — Japanese morphological analyzer (furigana tokenizer) -->
+  <script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
+  <style>
+    /* ── Reset & Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #f0f2fa;
+      --surface: #ffffff;
+      --surface2: #f5f6fd;
+      --border: #dde2f0;
+      --primary: #4f46e5;
+      --primary-light: #ede9fe;
+      --primary-dark: #3730a3;
+      --text: #111827;
+      --text-muted: #6b7280;
+      --text-light: #9ca3af;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --radius: 14px;
+      --shadow: 0 2px 12px rgba(79,70,229,.08);
+      --shadow-lg: 0 8px 32px rgba(79,70,229,.14);
+    }
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* ── Layout ── */
+    #app {
+      max-width: 480px;
+      margin: 0 auto;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: var(--shadow);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo-icon {
+      width: 36px; height: 36px;
+      background: var(--primary);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 900;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 17px; font-weight: 700; color: var(--text); }
+    header p { font-size: 12px; color: var(--text-muted); }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 65px;
+      z-index: 99;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 11px 8px;
+      border: none;
+      background: none;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      transition: color .2s, border-bottom .2s;
+      border-bottom: 2.5px solid transparent;
+      outline: none;
+    }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab-btn svg { width: 18px; height: 18px; }
+    .tab-panel { display: none; flex: 1; padding: 16px; }
+    .tab-panel.active { display: flex; flex-direction: column; gap: 14px; }
+
+    /* ── Camera Panel ── */
+    .cam-wrapper {
+      position: relative;
+      background: #000;
+      border-radius: var(--radius);
+      overflow: hidden;
+      aspect-ratio: 4/3;
+      box-shadow: var(--shadow-lg);
+    }
+    #video {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .cam-overlay {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .scan-frame {
+      width: 72%; height: 72%;
+      border: 2px solid rgba(255,255,255,.6);
+      border-radius: 12px;
+      position: relative;
+    }
+    .scan-frame::before, .scan-frame::after,
+    .scan-frame .corner-bl, .scan-frame .corner-br {
+      content: '';
+      position: absolute;
+      width: 20px; height: 20px;
+      border-color: var(--primary);
+      border-style: solid;
+    }
+    .scan-frame::before { top: -2px; left: -2px; border-width: 3px 0 0 3px; border-radius: 4px 0 0 0; }
+    .scan-frame::after  { top: -2px; right: -2px; border-width: 3px 3px 0 0; border-radius: 0 4px 0 0; }
+    .scan-frame .corner-bl { bottom: -2px; left: -2px; border-width: 0 0 3px 3px; border-radius: 0 0 0 4px; }
+    .scan-frame .corner-br { bottom: -2px; right: -2px; border-width: 0 3px 3px 0; border-radius: 0 0 4px 0; }
+    .scan-line {
+      position: absolute;
+      left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      animation: scanMove 2s ease-in-out infinite;
+    }
+    @keyframes scanMove {
+      0%   { top: 8%; }
+      50%  { top: 88%; }
+      100% { top: 8%; }
+    }
+
+    /* Camera idle / permission states */
+    .cam-placeholder {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px;
+      padding: 32px 24px;
+      text-align: center;
+      background: #0b0d1a;
+      border-radius: var(--radius);
+      aspect-ratio: 4/3;
+    }
+    .cam-placeholder svg { width: 56px; height: 56px; color: #4b5563; }
+    .cam-placeholder h3 { color: #e5e7eb; font-size: 16px; }
+    .cam-placeholder p { color: #6b7280; font-size: 13px; line-height: 1.5; }
+
+    /* Camera controls */
+    .cam-controls { display: flex; gap: 10px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 10px 18px;
+      border-radius: 10px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+      outline: none;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: var(--primary); color: #fff; flex: 1; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-secondary { background: var(--surface); color: var(--text); border: 1.5px solid var(--border); }
+    .btn-secondary:hover { background: var(--surface2); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-ghost  { background: transparent; color: var(--primary); border: 1.5px solid var(--primary); }
+    .btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+    .btn:disabled { opacity: .5; pointer-events: none; }
+
+    /* Capture / stop row */
+    .cam-action-row { display: flex; gap: 10px; align-items: center; }
+    .btn-capture {
+      flex: 1;
+      padding: 13px;
+      font-size: 15px;
+    }
+    .btn-icon {
+      width: 44px; height: 44px;
+      padding: 0;
+      border-radius: 10px;
+    }
+    .upload-label {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 14px; font-weight: 600;
+      background: var(--surface); color: var(--text);
+      border: 1.5px solid var(--border);
+      cursor: pointer;
+      transition: background .15s;
+    }
+    .upload-label:hover { background: var(--surface2); }
+    .upload-label svg { width: 16px; height: 16px; }
+    #file-input { display: none; }
+
+    /* Preview captured frame */
+    .preview-box {
+      position: relative;
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .preview-box img { width: 100%; display: block; border-radius: var(--radius); }
+    .preview-badge {
+      position: absolute; top: 10px; left: 10px;
+      background: rgba(0,0,0,.6); color: #fff;
+      font-size: 11px; font-weight: 600;
+      padding: 3px 10px; border-radius: 20px;
+    }
+
+    /* Error banner */
+    .error-box {
+      background: #fef2f2; border: 1.5px solid #fca5a5;
+      color: #b91c1c; border-radius: 10px;
+      padding: 12px 16px; font-size: 13px;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .error-box svg { width: 18px; height: 18px; flex-shrink: 0; margin-top: 1px; }
+
+    /* ── Results Panel ── */
+    .result-empty {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; padding: 48px 24px;
+      text-align: center;
+    }
+    .result-empty svg { width: 56px; height: 56px; color: var(--text-light); }
+    .result-empty h3 { color: var(--text-muted); font-size: 16px; }
+    .result-empty p  { color: var(--text-light); font-size: 13px; }
+
+    .result-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .result-card-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .result-card-header h3 { font-size: 14px; font-weight: 700; color: var(--text); }
+    .result-card-body { padding: 16px; }
+
+    /* Furigana display */
+    .furigana-block {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      align-items: flex-end;
+      padding: 16px;
+      background: var(--surface2);
+      border-radius: 10px;
+      min-height: 70px;
+    }
+    .furigana-unit {
+      display: inline-flex; flex-direction: column;
+      align-items: center;
+      cursor: default;
+    }
+    .furigana-reading {
+      font-size: 11px;
+      color: var(--primary);
+      line-height: 1.2;
+      text-align: center;
+      min-height: 14px;
+    }
+    .furigana-kanji {
+      font-size: 26px;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1;
+    }
+    .furigana-romaji {
+      font-size: 10px;
+      color: var(--text-muted);
+      line-height: 1.2;
+      text-align: center;
+    }
+
+    /* Toggle row */
+    .toggle-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .toggle-chip {
+      padding: 5px 12px;
+      border-radius: 20px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      font-size: 12px; font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .toggle-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+    /* Segments view */
+    .segments-grid { display: flex; flex-direction: column; gap: 8px; }
+    .seg-card {
+      background: var(--surface2);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex; align-items: center; gap: 14px;
+      border: 1px solid var(--border);
+    }
+    .seg-kanji { font-size: 28px; font-weight: 700; min-width: 48px; text-align: center; line-height: 1; }
+    .seg-info { flex: 1; min-width: 0; }
+    .seg-furigana { font-size: 12px; color: var(--primary); font-weight: 600; }
+    .seg-romaji { font-size: 12px; color: var(--text-muted); }
+    .seg-meaning { font-size: 13px; color: var(--text); margin-top: 2px; }
+    .seg-badge {
+      font-size: 10px; font-weight: 700;
+      padding: 2px 8px; border-radius: 12px;
+      text-transform: uppercase; letter-spacing: .5px;
+      flex-shrink: 0;
+    }
+    .badge-kanji   { background: #ede9fe; color: #5b21b6; }
+    .badge-hiragana{ background: #d1fae5; color: #065f46; }
+    .badge-katakana{ background: #fef3c7; color: #92400e; }
+    .badge-mixed   { background: #dbeafe; color: #1e40af; }
+
+    /* Translation box */
+    .translation-box {
+      background: var(--primary-light);
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .translation-box .label { font-size: 11px; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .translation-box .value { font-size: 15px; color: var(--text); line-height: 1.6; }
+    .notes-box {
+      background: #fffbeb; border: 1px solid #fcd34d;
+      border-radius: 10px; padding: 12px 14px;
+    }
+    .notes-box .label { font-size: 11px; font-weight: 700; color: #92400e; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
+    .notes-box .value { font-size: 13px; color: #78350f; line-height: 1.5; }
+
+    /* ── History Panel ── */
+    .history-empty {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; padding: 48px 24px; text-align: center;
+    }
+    .history-empty svg { width: 48px; height: 48px; color: var(--text-light); }
+    .history-empty p { color: var(--text-light); font-size: 13px; }
+
+    .history-header {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .history-header span { font-size: 13px; color: var(--text-muted); font-weight: 600; }
+    .history-list { display: flex; flex-direction: column; gap: 10px; }
+    .history-item {
+      background: var(--surface); border-radius: var(--radius);
+      border: 1.5px solid var(--border);
+      padding: 12px 14px;
+      display: flex; gap: 12px; align-items: flex-start;
+      cursor: pointer;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .history-item:hover, .history-item.active {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(79,70,229,.08);
+    }
+    .history-thumb {
+      width: 52px; height: 52px; border-radius: 8px;
+      object-fit: cover; flex-shrink: 0;
+      background: var(--surface2);
+    }
+    .history-item-info { flex: 1; min-width: 0; }
+    .history-kanji { font-size: 17px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-translation { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .history-time { font-size: 11px; color: var(--text-light); margin-top: 4px; }
+    .del-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-light); padding: 4px; border-radius: 6px;
+      transition: color .15s, background .15s;
+      flex-shrink: 0;
+    }
+    .del-btn:hover { color: var(--danger); background: #fef2f2; }
+    .del-btn svg { width: 15px; height: 15px; }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      width: 22px; height: 22px;
+      border: 2.5px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: inline-block;
+    }
+    .spinner-dark {
+      border-color: rgba(79,70,229,.2);
+      border-top-color: var(--primary);
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Loading overlay */
+    .loading-overlay {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,.55);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 10px; border-radius: var(--radius);
+      z-index: 10;
+    }
+    .loading-overlay p { color: #fff; font-size: 14px; font-weight: 600; }
+
+    /* Permission screen */
+    .perm-screen {
+      background: #0b0d1a;
+      border-radius: var(--radius);
+      aspect-ratio: 4/3;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 14px; padding: 32px 24px; text-align: center;
+    }
+    .perm-icon {
+      width: 64px; height: 64px;
+      background: rgba(79,70,229,.2);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .perm-icon svg { width: 32px; height: 32px; color: var(--primary); }
+    .perm-title { color: #f9fafb; font-size: 17px; font-weight: 700; }
+    .perm-desc  { color: #9ca3af; font-size: 13px; line-height: 1.6; }
+    .perm-steps { color: #6b7280; font-size: 12px; text-align: left; width: 100%; line-height: 1.8; }
+
+    /* ── Text detection overlay (Google Lens style) ── */
+    .ocr-overlay-wrap {
+      position: relative;
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+      background: #000;
+    }
+    .ocr-overlay-wrap img {
+      width: 100%;
+      display: block;
+      border-radius: var(--radius);
+    }
+    #ocr-canvas-overlay {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      border-radius: var(--radius);
+    }
+    .ocr-badge {
+      position: absolute; bottom: 10px; right: 10px;
+      background: rgba(79,70,229,.9); color: #fff;
+      font-size: 11px; font-weight: 700;
+      padding: 4px 10px; border-radius: 20px;
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; gap: 5px;
+    }
+    .ocr-badge-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #4ade80;
+    }
+
+    /* Preprocessing canvas (hidden) */
+    #preprocess-canvas { display: none; }
+
+    /* Misc */
+    .divider { border: none; border-top: 1px solid var(--border); }
+    .badge-new {
+      background: var(--primary); color: #fff;
+      font-size: 10px; padding: 1px 6px; border-radius: 8px;
+      font-weight: 700;
+    }
+    .view-tabs { display: flex; gap: 6px; }
+    .view-tab {
+      padding: 5px 12px; border-radius: 8px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      font-size: 12px; font-weight: 600; color: var(--text-muted);
+      cursor: pointer; transition: all .15s;
+    }
+    .view-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo-icon">漢</div>
+    <div>
+      <h1>Kanji Scanner</h1>
+      <p>Google Vision OCR • Furigana • Terjemahan</p>
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="scanner" onclick="switchTab('scanner')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      Scanner
+    </button>
+    <button class="tab-btn" data-tab="result" onclick="switchTab('result')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Hasil
+    </button>
+    <button class="tab-btn" data-tab="history" onclick="switchTab('history')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Riwayat
+    </button>
+  </div>
+
+  <!-- ====== SCANNER TAB ====== -->
+  <div id="tab-scanner" class="tab-panel active">
+
+    <!-- Camera / Permission / Preview area -->
+    <div id="cam-area">
+      <!-- Idle state -->
+      <div id="state-idle" class="cam-placeholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        <h3>Kamera Siap</h3>
+        <p>Tekan "Buka Kamera" untuk mulai scan kanji, atau upload foto dari galeri.</p>
+      </div>
+
+      <!-- Permission requesting -->
+      <div id="state-requesting" class="perm-screen" style="display:none">
+        <div class="perm-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        </div>
+        <p class="perm-title">Meminta Izin Kamera...</p>
+        <p class="perm-desc">Mohon izinkan akses kamera pada popup browser yang muncul.</p>
+        <div class="spinner spinner-dark" style="border-top-color:var(--primary)"></div>
+      </div>
+
+      <!-- Permission denied -->
+      <div id="state-denied" class="perm-screen" style="display:none">
+        <div class="perm-icon" style="background:rgba(239,68,68,.15)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        </div>
+        <p class="perm-title" style="color:#f9fafb">Izin Kamera Ditolak</p>
+        <p class="perm-steps" id="denied-steps"></p>
+      </div>
+
+      <!-- Live camera -->
+      <div id="state-live" class="cam-wrapper" style="display:none">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="cam-overlay">
+          <div class="scan-frame">
+            <div class="corner-bl"></div>
+            <div class="corner-br"></div>
+            <div class="scan-line" id="scan-line" style="display:none"></div>
+          </div>
+        </div>
+        <!-- Loading overlay -->
+        <div id="cam-loading" class="loading-overlay" style="display:none">
+          <div class="spinner"></div>
+          <p>Menganalisis kanji...</p>
+        </div>
+      </div>
+
+      <!-- Captured preview with OCR overlay burned into image -->
+      <div id="state-preview" class="ocr-overlay-wrap" style="display:none">
+        <img id="preview-img" src="" alt="Captured frame" />
+        <div id="preview-loading" class="loading-overlay" style="display:none">
+          <div class="spinner"></div>
+          <p id="loading-status">Memproses gambar...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden canvas for image preprocessing -->
+    <canvas id="preprocess-canvas"></canvas>
+
+    <!-- Error -->
+    <div id="error-box" class="error-box" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span id="error-msg"></span>
+    </div>
+
+    <!-- Controls -->
+    <div id="ctrl-idle" class="cam-controls">
+      <button class="btn btn-primary" onclick="startCamera()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        Buka Kamera
+      </button>
+      <label class="upload-label" for="file-input">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload
+      </label>
+      <input type="file" id="file-input" accept="image/*" onchange="handleFileUpload(event)" />
+    </div>
+
+    <div id="ctrl-live" style="display:none">
+      <div class="cam-action-row">
+        <button class="btn btn-primary btn-capture" onclick="captureFrame()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="9"/></svg>
+          Ambil Gambar
+        </button>
+        <button class="btn btn-secondary btn-icon" onclick="flipCamera()" title="Flip kamera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+        </button>
+        <button class="btn btn-secondary btn-icon" onclick="stopCamera()" title="Tutup kamera">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <label class="upload-label" for="file-input" style="margin-top:0">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Upload Gambar
+      </label>
+    </div>
+
+    <div id="ctrl-preview" style="display:none" class="cam-controls">
+      <button class="btn btn-primary" onclick="analyzeCurrentPreview()" id="btn-analyze">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Scan Kanji
+      </button>
+      <button class="btn btn-secondary" onclick="retakePhoto()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        Ulangi
+      </button>
+    </div>
+
+  </div><!-- /scanner tab -->
+
+  <!-- ====== RESULT TAB ====== -->
+  <div id="tab-result" class="tab-panel">
+    <div id="result-empty" class="result-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <h3>Belum ada hasil</h3>
+      <p>Scan kanji terlebih dahulu menggunakan kamera atau upload foto.</p>
+    </div>
+    <div id="result-content" style="display:none; flex-direction:column; gap:14px;"></div>
+  </div>
+
+  <!-- ====== HISTORY TAB ====== -->
+  <div id="tab-history" class="tab-panel">
+    <div id="history-empty" class="history-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <p>Belum ada riwayat scan.</p>
+    </div>
+    <div id="history-content" style="display:none; flex-direction:column; gap:14px;">
+      <div class="history-header">
+        <span id="history-count"></span>
+        <button class="btn btn-danger" style="padding:6px 14px;font-size:13px" onclick="clearHistory()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6m4-6v6"/><path d="M9 6V4h6v2"/></svg>
+          Hapus Semua
+        </button>
+      </div>
+      <div id="history-list" class="history-list"></div>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let mediaStream   = null;
+let facingMode    = 'environment';
+let currentPreviewDataUrl = null;
+let scanResult    = null;
+let resultView    = 'furigana'; // 'furigana' | 'segments' | 'translation'
+let showFurigana  = true;
+let history       = [];
+
+const HISTORY_KEY       = 'kanji_scan_history';
+// Google Cloud Vision API — TEXT_DETECTION, 1000 req/month free
+const VISION_API_KEY    = 'AIzaSyBCuS9yn4GbIvIu2iEpArOzfVvzac-G5K8'; // KanjiRecognition project
+const VISION_API_URL    = `https://vision.googleapis.com/v1/images:annotate?key=${VISION_API_KEY}`;
+
+// ── kuromoji setup (Japanese morphological analyzer) ─────────────────────────
+let kuromojiTokenizer = null;
+let kuromojiReady     = false;
+
+const KUROMOJI_DICT = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/';
+
+function initKuromoji() {
+  if (typeof kuromoji === 'undefined') {
+    // Script not yet loaded — retry
+    setTimeout(initKuromoji, 300);
+    return;
+  }
+  kuromoji.builder({ dicPath: KUROMOJI_DICT }).build((err, tokenizer) => {
+    if (err) { console.warn('[kanji] kuromoji init failed:', err); return; }
+    kuromojiTokenizer = tokenizer;
+    kuromojiReady = true;
+  });
+}
+
+// Build segments from kuromoji tokens
+function buildSegments(text) {
+  return new Promise((resolve) => {
+    if (!kuromojiReady || !kuromojiTokenizer) {
+      resolve([{ kanji: text, furigana: '', romaji: '', meaning: text, type: detectType(text) }]);
+      return;
+    }
+    const tokens = kuromojiTokenizer.tokenize(text);
+    const segments = tokens
+      .filter(t => t.surface_form && t.surface_form.trim())
+      .map(t => {
+        const surface  = t.surface_form;
+        const reading  = t.reading || surface;
+        const hiragana = reading.replace(/[\u30A1-\u30F6]/g,
+          c => String.fromCharCode(c.charCodeAt(0) - 0x60)
+        );
+        const romaji = hiraganaToRomaji(hiragana);
+        const type   = detectType(surface);
+        return {
+          kanji:    surface,
+          furigana: (type === 'kanji' || type === 'mixed') ? hiragana : '',
+          romaji,
+          meaning:  (t.basic_form && t.basic_form !== '*') ? t.basic_form : surface,
+          type,
+        };
+      });
+    resolve(segments);
+  });
+}
+
+// Detect if string has kanji characters
+function hasKanji(str) {
+  return /[\u4E00-\u9FFF\u3400-\u4DBF]/.test(str);
+}
+function hasHiragana(str) {
+  return /[\u3040-\u309F]/.test(str);
+}
+function hasKatakana(str) {
+  return /[\u30A0-\u30FF]/.test(str);
+}
+function detectType(str) {
+  const k = hasKanji(str), h = hasHiragana(str), ka = hasKatakana(str);
+  if (k && (h || ka)) return 'mixed';
+  if (k) return 'kanji';
+  if (ka) return 'katakana';
+  return 'hiragana';
+}
+
+// Convert hiragana to romaji (simple lookup table)
+function hiraganaToRomaji(str) {
+  const map = {
+    'あ':'a','い':'i','う':'u','え':'e','お':'o',
+    'か':'ka','き':'ki','く':'ku','け':'ke','こ':'ko',
+    'が':'ga','ぎ':'gi','ぐ':'gu','げ':'ge','ご':'go',
+    'さ':'sa','し':'shi','す':'su','せ':'se','そ':'so',
+    'ざ':'za','じ':'ji','ず':'zu','ぜ':'ze','ぞ':'zo',
+    'た':'ta','ち':'chi','つ':'tsu','て':'te','と':'to',
+    'だ':'da','ぢ':'ji','づ':'zu','で':'de','ど':'do',
+    'な':'na','に':'ni','ぬ':'nu','ね':'ne','の':'no',
+    'は':'ha','ひ':'hi','ふ':'fu','へ':'he','ほ':'ho',
+    'ば':'ba','び':'bi','ぶ':'bu','べ':'be','ぼ':'bo',
+    'ぱ':'pa','ぴ':'pi','ぷ':'pu','ぺ':'pe','ぽ':'po',
+    'ま':'ma','み':'mi','む':'mu','め':'me','も':'mo',
+    'や':'ya','ゆ':'yu','よ':'yo',
+    'ら':'ra','り':'ri','る':'ru','れ':'re','ろ':'ro',
+    'わ':'wa','を':'wo','ん':'n',
+    'きゃ':'kya','きゅ':'kyu','きょ':'kyo',
+    'しゃ':'sha','しゅ':'shu','しょ':'sho',
+    'ちゃ':'cha','ちゅ':'chu','ちょ':'cho',
+    'にゃ':'nya','にゅ':'nyu','にょ':'nyo',
+    'ひゃ':'hya','ひゅ':'hyu','ひょ':'hyo',
+    'みゃ':'mya','みゅ':'myu','みょ':'myo',
+    'りゃ':'rya','りゅ':'ryu','りょ':'ryo',
+    'ぎゃ':'gya','ぎゅ':'gyu','ぎょ':'gyo',
+    'じゃ':'ja','じゅ':'ju','じょ':'jo',
+    'びゃ':'bya','びゅ':'byu','びょ':'byo',
+    'ぴゃ':'pya','ぴゅ':'pyu','ぴょ':'pyo',
+    'っ':'', 'ー':'-',
+  };
+  let result = '';
+  let i = 0;
+  while (i < str.length) {
+    const two = str.slice(i, i + 2);
+    const one = str[i];
+    if (map[two]) { result += map[two]; i += 2; }
+    else if (map[one]) { result += map[one]; i++; }
+    else { result += one; i++; }
+  }
+  return result;
+}
+
+// Translate text using MyMemory free API (no key needed)
+async function translateToEnglish(text) {
+  if (!text) return '';
+  try {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text.slice(0,500))}&langpair=ja|en`;
+    const res = await fetch(url);
+    const data = await res.json();
+    return data?.responseData?.translatedText || '';
+  } catch {
+    return '';
+  }
+}
+
+// ── Convert dataURL to pure base64 (strip the data:...;base64, prefix) ───────
+function dataUrlToBase64(dataUrl) {
+  return dataUrl.split(',')[1];
+}
+
+// ── Resize image to max 4MB base64 (Vision API limit) ────────────────────────
+function resizeImageIfNeeded(dataUrl, maxBytes = 3_800_000) {
+  return new Promise((resolve) => {
+    // If already small enough, return as-is
+    const base64 = dataUrlToBase64(dataUrl);
+    if (base64.length <= maxBytes) { resolve(dataUrl); return; }
+
+    const img = new Image();
+    img.onload = () => {
+      let { naturalWidth: w, naturalHeight: h } = img;
+      const ratio = Math.sqrt(maxBytes / base64.length);
+      w = Math.round(w * ratio);
+      h = Math.round(h * ratio);
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL('image/jpeg', 0.90));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+// ── Analyze image using Google Cloud Vision API ───────────────────────────────
+async function callScanAPI(imageDataUrl) {
+  const setStatus = (msg) => {
+    const p = document.getElementById('loading-status');
+    if (p) p.textContent = msg;
+  };
+
+  // Step 1: Resize if needed to stay under Vision API 4MB limit
+  setStatus('Menyiapkan gambar...');
+  const readyUrl = await resizeImageIfNeeded(imageDataUrl);
+  const base64   = dataUrlToBase64(readyUrl);
+
+  // Step 2: Call Google Cloud Vision TEXT_DETECTION
+  setStatus('Mengirim ke Google Vision OCR...');
+  let fullText    = '';
+  let ocrWords    = [];
+  let imgW = 1, imgH = 1;
+
+  try {
+    const body = {
+      requests: [{
+        image: { content: base64 },
+        features: [
+          { type: 'TEXT_DETECTION', maxResults: 50 },
+          { type: 'DOCUMENT_TEXT_DETECTION', maxResults: 1 },
+        ],
+        imageContext: {
+          languageHints: ['ja', 'en'],
+        },
+      }],
+    };
+
+    const res = await fetch(VISION_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`Vision API error ${res.status}: ${err?.error?.message || res.statusText}`);
+    }
+
+    const data = await res.json();
+    const resp = data?.responses?.[0];
+
+    if (resp?.error) {
+      throw new Error('Vision API: ' + resp.error.message);
+    }
+
+    // fullTextAnnotation gives the cleanest text
+    fullText = resp?.fullTextAnnotation?.text?.trim() || '';
+
+    // TEXT_DETECTION annotations give per-word bounding polygons
+    // annotations[0] is the whole-image block; skip it
+    const annotations = (resp?.textAnnotations || []).slice(1);
+
+    // Get original image dimensions from the first annotation (full text block)
+    // so we can scale bounding polys to the original dataUrl dimensions
+    const firstAnno = resp?.textAnnotations?.[0];
+    if (firstAnno?.boundingPoly?.vertices?.length) {
+      const verts = firstAnno.boundingPoly.vertices;
+      imgW = Math.max(...verts.map(v => v.x || 0));
+      imgH = Math.max(...verts.map(v => v.y || 0));
+    }
+
+    // Build per-word bbox list from Vision word annotations
+    // Vision uses boundingPoly with 4 vertices (top-left, top-right, bottom-right, bottom-left)
+    ocrWords = annotations
+      .filter(a => a.description && a.description.trim())
+      .map(a => {
+        const verts = a.boundingPoly?.vertices || [];
+        const xs = verts.map(v => v.x || 0);
+        const ys = verts.map(v => v.y || 0);
+        return {
+          text: a.description.trim(),
+          bbox: {
+            x0: Math.min(...xs),
+            y0: Math.min(...ys),
+            x1: Math.max(...xs),
+            y1: Math.max(...ys),
+          },
+        };
+      })
+      .filter(w => {
+        const bw = w.bbox.x1 - w.bbox.x0;
+        const bh = w.bbox.y1 - w.bbox.y0;
+        return bw > 4 && bh > 4;
+      });
+
+  } catch (err) {
+    throw new Error('OCR gagal: ' + (err.message || err));
+  }
+
+  // Step 3: Burn text-region overlay onto the ORIGINAL captured image
+  setStatus('Menandai teks...');
+  if (ocrWords.length > 0) {
+    // Vision bbox coords correspond to the resizedUrl image dimensions.
+    // Scale them back to the original imageDataUrl if it was resized.
+    let scaledWords = ocrWords;
+    if (readyUrl !== imageDataUrl) {
+      const orig = await new Promise(r => {
+        const i = new Image(); i.onload = () => r(i); i.src = imageDataUrl;
+      });
+      const ready = await new Promise(r => {
+        const i = new Image(); i.onload = () => r(i); i.src = readyUrl;
+      });
+      const sx = orig.naturalWidth  / ready.naturalWidth;
+      const sy = orig.naturalHeight / ready.naturalHeight;
+      scaledWords = ocrWords.map(w => ({
+        ...w,
+        bbox: {
+          x0: Math.round(w.bbox.x0 * sx),
+          y0: Math.round(w.bbox.y0 * sy),
+          x1: Math.round(w.bbox.x1 * sx),
+          y1: Math.round(w.bbox.y1 * sy),
+        },
+      }));
+    }
+    const burned = await burnOCROverlay(imageDataUrl, scaledWords);
+    if (burned) {
+      document.getElementById('preview-img').src = burned;
+      currentPreviewDataUrl = burned;
+    }
+  }
+
+  if (!fullText) {
+    return {
+      detected_text: '',
+      segments: [],
+      translation: 'Tidak ada teks terdeteksi pada gambar.',
+      language_notes: '',
+      ocrWords: [],
+    };
+  }
+
+  // Step 4: Build furigana segments using Kuroshiro (most accurate)
+  setStatus('Menganalisis furigana...');
+  // Keep only Japanese lines
+  const jpText = fullText
+    .split('\n')
+    .filter(l => /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(l))
+    .join('');
+  const textForTokenize = jpText || fullText;
+
+  const segments = await buildSegments(textForTokenize);
+
+  // Step 5: Translate with MyMemory
+  setStatus('Menerjemahkan...');
+  const translation = await translateToEnglish(fullText);
+
+  return {
+    detected_text: fullText,
+    segments,
+    translation: translation || fullText,
+    language_notes: 'OCR: Google Cloud Vision API • Furigana: kuromoji.js • Terjemahan: MyMemory API',
+    ocrWords,
+  };
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  loadHistory();
+  initKuromoji();
+});
+
+// ── Tabs ──────────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  if (tab === 'history') renderHistory();
+}
+
+// ── Camera ────────────────────────────────────────────────────────────────
+function setCamState(state) {
+  // states: idle | requesting | denied | live | preview
+  ['idle','requesting','denied','live','preview'].forEach(s => {
+    document.getElementById('state-' + s).style.display = s === state ? '' : 'none';
+  });
+  document.getElementById('ctrl-idle').style.display    = (state === 'idle' || state === 'denied') ? '' : 'none';
+  document.getElementById('ctrl-live').style.display    = state === 'live' ? '' : 'none';
+  document.getElementById('ctrl-preview').style.display = state === 'preview' ? '' : 'none';
+}
+
+async function startCamera() {
+  hideError();
+  setCamState('requesting');
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showDenied('Browser Anda tidak mendukung akses kamera.\nCoba gunakan Chrome, Firefox, atau Safari terbaru.');
+    return;
+  }
+
+  const constraints = {
+    video: { facingMode, width: { ideal: 1280 }, height: { ideal: 960 } },
+    audio: false,
+  };
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    attachStream(stream);
+  } catch (err) {
+    console.log('[kanji] getUserMedia error:', err.name, err.message);
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      showDenied(
+        'Izin kamera ditolak. Cara mengaktifkan:\n\n' +
+        '1. Klik ikon kunci / kamera di address bar browser\n' +
+        '2. Ubah "Kamera" dari Blokir menjadi Izinkan\n' +
+        '3. Refresh halaman ini\n\n' +
+        'Atau gunakan tombol Upload untuk pilih foto dari galeri.'
+      );
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      showDenied('Kamera tidak ditemukan pada perangkat ini.\nGunakan tombol Upload untuk memilih gambar dari galeri.');
+    } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      // Retry without facingMode constraint
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        attachStream(stream);
+      } catch {
+        showDenied('Kamera sedang digunakan aplikasi lain.\nTutup aplikasi yang menggunakan kamera lalu coba lagi.');
+      }
+    } else if (err.name === 'OverconstrainedError') {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        attachStream(stream);
+      } catch {
+        showDenied('Gagal membuka kamera: ' + err.message);
+      }
+    } else {
+      showDenied('Gagal membuka kamera: ' + err.message);
+    }
+  }
+}
+
+function attachStream(stream) {
+  mediaStream = stream;
+  const video = document.getElementById('video');
+  video.srcObject = stream;
+  video.onloadedmetadata = () => {
+    video.play().catch(() => {});
+    setCamState('live');
+  };
+}
+
+function stopCamera() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  const video = document.getElementById('video');
+  video.srcObject = null;
+  currentPreviewDataUrl = null;
+  setCamState('idle');
+  hideError();
+}
+
+async function flipCamera() {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(t => t.stop());
+    mediaStream = null;
+  }
+  await startCamera();
+}
+
+function captureFrame() {
+  const video = document.getElementById('video');
+  if (!video.videoWidth) { showError('Video belum siap, coba lagi.'); return; }
+
+  // Capture at higher resolution for better OCR accuracy
+  const canvas = document.createElement('canvas');
+  const scale = Math.min(2, 1920 / video.videoWidth); // upscale up to 2x, max 1920px
+  canvas.width  = video.videoWidth  * scale;
+  canvas.height = video.videoHeight * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.96);
+  showPreview(dataUrl);
+}
+
+// ── Burn OCR Word Overlay directly into the ORIGINAL image (Google Lens style)
+// Uses a fresh off-screen canvas so it never conflicts with preprocess-canvas.
+// Bbox coords must already be in original-image pixel space.
+function burnOCROverlay(imageDataUrl, words) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const W = img.naturalWidth;
+      const H = img.naturalHeight;
+
+      // Use a dedicated off-screen canvas — never share with preprocess
+      const canvas = document.createElement('canvas');
+      canvas.width  = W;
+      canvas.height = H;
+      const ctx = canvas.getContext('2d');
+
+      // Draw the original unmodified photo as base
+      ctx.drawImage(img, 0, 0);
+
+      // Filter: only words containing Japanese characters
+      const jpWords = words.filter(w =>
+        w.text && w.text.trim() &&
+        /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\u3400-\u4DBF]/.test(w.text)
+      );
+
+      if (!jpWords.length) { resolve(null); return; }
+
+      jpWords.forEach(word => {
+        const bb = word.bbox;
+        const bx = bb.x0, by = bb.y0;
+        const bw = bb.x1 - bb.x0;
+        const bh = bb.y1 - bb.y0;
+        if (bw < 6 || bh < 6) return;
+
+        const pad      = Math.max(4, bh * 0.15);
+        const radius   = Math.min(10, (bh + pad * 2) * 0.35);
+        const fontSize = Math.max(12, Math.min(bh * 0.80, 32));
+
+        // White rounded-rect background with indigo border
+        ctx.save();
+        ctx.fillStyle   = 'rgba(255,255,255,0.95)';
+        ctx.strokeStyle = 'rgba(79,70,229,0.85)';
+        ctx.lineWidth   = Math.max(2, bh * 0.06);
+        ctx.shadowColor = 'rgba(0,0,0,0.25)';
+        ctx.shadowBlur  = 4;
+        ctx.beginPath();
+        ctx.roundRect(bx - pad, by - pad, bw + pad * 2, bh + pad * 2, radius);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.stroke();
+
+        // Japanese text centred inside the pill
+        ctx.fillStyle    = '#1e1b4b';
+        ctx.font         = `700 ${fontSize}px "Noto Sans JP", "Yu Gothic", sans-serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(word.text, bx + bw / 2, by + bh / 2);
+        ctx.restore();
+      });
+
+      resolve(canvas.toDataURL('image/jpeg', 0.95));
+    };
+    img.onerror = () => resolve(null);
+    img.src = imageDataUrl;
+  });
+}
+
+function showPreview(dataUrl) {
+  currentPreviewDataUrl = dataUrl;
+  document.getElementById('preview-img').src = dataUrl;
+  setCamState('preview');
+}
+
+function retakePhoto() {
+  currentPreviewDataUrl = null;
+  if (mediaStream) {
+    setCamState('live');
+  } else {
+    setCamState('idle');
+  }
+}
+
+function handleFileUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    stopCamera();
+    showPreview(e.target.result);
+  };
+  reader.readAsDataURL(file);
+  event.target.value = '';
+}
+
+function showDenied(msg) {
+  document.getElementById('denied-steps').innerText = msg;
+  setCamState('denied');
+}
+
+// ── Scan / API ────────────────────────────────────────────────────────────
+async function analyzeCurrentPreview() {
+  if (!currentPreviewDataUrl) return;
+  hideError();
+
+  const loadingEl  = document.getElementById('preview-loading');
+  const btnAnalyze = document.getElementById('btn-analyze');
+  loadingEl.style.display = '';
+  btnAnalyze.disabled = true;
+
+  try {
+    const result = await callScanAPI(currentPreviewDataUrl);
+    scanResult = result;
+    // currentPreviewDataUrl may have been updated to annotated version inside callScanAPI
+    saveToHistory(currentPreviewDataUrl, result);
+    renderResult(result);
+    switchTab('result');
+  } catch (err) {
+    showError(err.message || 'Gagal menganalisis gambar.');
+  } finally {
+    loadingEl.style.display = 'none';
+    btnAnalyze.disabled = false;
+  }
+}
+
+
+
+// ── Render Results ────────────────────────────────────────────────────────
+function renderResult(data) {
+  const container = document.getElementById('result-content');
+  document.getElementById('result-empty').style.display = 'none';
+  container.style.display = 'flex';
+  container.innerHTML = '';
+
+  if (!data || (!data.detected_text && data.segments?.length === 0)) {
+    container.innerHTML = `<div class="result-empty"><p style="color:var(--text-muted)">Tidak ada teks Jepang yang terdeteksi pada gambar ini.</p></div>`;
+    return;
+  }
+
+  // Top action row: view switcher + "Lihat Gambar" button
+  const topRow = document.createElement('div');
+  topRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap';
+  topRow.innerHTML = `
+    <div class="view-tabs">
+      <button class="view-tab ${resultView==='furigana'?'active':''}" onclick="setResultView('furigana')">Furigana</button>
+      <button class="view-tab ${resultView==='segments'?'active':''}" onclick="setResultView('segments')">Kata</button>
+      <button class="view-tab ${resultView==='translation'?'active':''}" onclick="setResultView('translation')">Terjemahan</button>
+    </div>
+    <button class="btn btn-ghost" style="padding:5px 12px;font-size:12px;gap:5px" onclick="switchTab('scanner')" title="Lihat gambar dengan anotasi teks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      Lihat Gambar
+    </button>
+  `;
+  container.appendChild(topRow);
+
+  // Furigana view
+  const furiganaCard = document.createElement('div');
+  furiganaCard.id = 'view-furigana';
+  furiganaCard.style.display = resultView === 'furigana' ? '' : 'none';
+  furiganaCard.innerHTML = buildFuriganaCard(data);
+  container.appendChild(furiganaCard);
+
+  // Segments view
+  const segCard = document.createElement('div');
+  segCard.id = 'view-segments';
+  segCard.style.display = resultView === 'segments' ? '' : 'none';
+  segCard.innerHTML = buildSegmentsCard(data);
+  container.appendChild(segCard);
+
+  // Translation view
+  const transCard = document.createElement('div');
+  transCard.id = 'view-translation';
+  transCard.style.display = resultView === 'translation' ? '' : 'none';
+  transCard.innerHTML = buildTranslationCard(data);
+  container.appendChild(transCard);
+}
+
+function setResultView(view) {
+  resultView = view;
+  document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.textContent.trim() === ({furigana:'Furigana',segments:'Kata',translation:'Terjemahan'}[view])));
+  ['furigana','segments','translation'].forEach(v => {
+    const el = document.getElementById('view-' + v);
+    if (el) el.style.display = v === view ? '' : 'none';
+  });
+}
+
+function buildFuriganaCard(data) {
+  const segments = data.segments || [];
+  const ocrWords = (data.ocrWords || []).filter(w =>
+    /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(w.text)
+  );
+  const units = segments.map(seg => {
+    const isKanji = seg.type === 'kanji' || seg.type === 'mixed';
+    return `<div class="furigana-unit">
+      <span class="furigana-reading">${isKanji && showFurigana ? escHtml(seg.furigana || '') : ''}</span>
+      <span class="furigana-kanji">${escHtml(seg.kanji || '')}</span>
+      <span class="furigana-romaji">${escHtml(seg.romaji || '')}</span>
+    </div>`;
+  }).join('');
+
+  const ocrInfo = ocrWords.length
+    ? `<span style="font-size:11px;color:var(--success);font-weight:600;display:flex;align-items:center;gap:4px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:13px;height:13px"><polyline points="20 6 9 17 4 12"/></svg>
+        ${ocrWords.length} region teks terdeteksi
+       </span>`
+    : '';
+
+  return `<div class="result-card">
+    <div class="result-card-header">
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <h3>Teks dengan Furigana</h3>
+        ${ocrInfo}
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--text-muted)">
+        <input type="checkbox" ${showFurigana?'checked':''} onchange="toggleFurigana(this.checked)" style="accent-color:var(--primary)" />
+        Furigana
+      </label>
+    </div>
+    <div class="result-card-body">
+      <div class="furigana-block" id="furigana-block">${units || '<span style="color:var(--text-light);font-size:13px">Tidak ada teks</span>'}</div>
+    </div>
+  </div>`;
+}
+
+function buildSegmentsCard(data) {
+  const segments = data.segments || [];
+  const badgeClass = { kanji:'badge-kanji', hiragana:'badge-hiragana', katakana:'badge-katakana', mixed:'badge-mixed' };
+  const cards = segments.map(seg => `
+    <div class="seg-card">
+      <div class="seg-kanji">${escHtml(seg.kanji || '')}</div>
+      <div class="seg-info">
+        <div class="seg-furigana">${escHtml(seg.furigana || '')}</div>
+        <div class="seg-romaji">${escHtml(seg.romaji || '')}</div>
+        <div class="seg-meaning">${escHtml(seg.meaning || '')}</div>
+      </div>
+      <span class="seg-badge ${badgeClass[seg.type] || 'badge-mixed'}">${escHtml(seg.type || 'kanji')}</span>
+    </div>`).join('');
+
+  return `<div class="result-card">
+    <div class="result-card-header"><h3>Kata per Kata (${segments.length})</h3></div>
+    <div class="result-card-body">
+      <div class="segments-grid">${cards || '<p style="color:var(--text-light);font-size:13px">Tidak ada segmen.</p>'}</div>
+    </div>
+  </div>`;
+}
+
+function buildTranslationCard(data) {
+  const wordBreakdown = (data.segments || []).map(seg =>
+    `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);gap:12px">
+       <span style="font-size:16px;font-weight:700">${escHtml(seg.kanji||'')} <span style="font-size:11px;color:var(--primary);font-weight:400">${escHtml(seg.furigana||'')}</span></span>
+       <span style="font-size:13px;color:var(--text-muted);text-align:right;flex:1">${escHtml(seg.meaning||'')}</span>
+     </div>`).join('');
+
+  const notes = data.language_notes
+    ? `<div class="notes-box"><div class="label">Catatan Bahasa</div><div class="value">${escHtml(data.language_notes)}</div></div>`
+    : '';
+
+  return `<div style="display:flex;flex-direction:column;gap:12px">
+    <div class="translation-box">
+      <div class="label">Terjemahan Bahasa Inggris</div>
+      <div class="value">${escHtml(data.translation || 'Tidak tersedia')}</div>
+    </div>
+    ${data.detected_text ? `<div class="result-card">
+      <div class="result-card-header"><h3>Teks Asli</h3></div>
+      <div class="result-card-body" style="font-size:18px;font-weight:600;line-height:1.8">${escHtml(data.detected_text)}</div>
+    </div>` : ''}
+    ${wordBreakdown ? `<div class="result-card">
+      <div class="result-card-header"><h3>Kata per Kata</h3></div>
+      <div class="result-card-body">${wordBreakdown}</div>
+    </div>` : ''}
+    ${notes}
+  </div>`;
+}
+
+function toggleFurigana(checked) {
+  showFurigana = checked;
+  if (scanResult) {
+    const block = document.getElementById('furigana-block');
+    if (!block) return;
+    const segments = scanResult.segments || [];
+    block.innerHTML = segments.map(seg => {
+      const isKanji = seg.type === 'kanji' || seg.type === 'mixed';
+      return `<div class="furigana-unit">
+        <span class="furigana-reading">${isKanji && showFurigana ? escHtml(seg.furigana || '') : ''}</span>
+        <span class="furigana-kanji">${escHtml(seg.kanji || '')}</span>
+        <span class="furigana-romaji">${escHtml(seg.romaji || '')}</span>
+      </div>`;
+    }).join('') || '<span style="color:var(--text-light);font-size:13px">Tidak ada teks</span>';
+  }
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    history = raw ? JSON.parse(raw) : [];
+  } catch { history = []; }
+  renderHistory();
+}
+
+function saveToHistory(imageDataUrl, result) {
+  const item = {
+    id: Date.now().toString(),
+    imageDataUrl,
+    detected_text: result.detected_text || '',
+    translation: result.translation || '',
+    segments: result.segments || [],
+    language_notes: result.language_notes || '',
+    scannedAt: new Date().toISOString(),
+  };
+  history.unshift(item);
+  if (history.length > 50) history = history.slice(0, 50);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
+  // Update badge count if on history tab
+  updateHistoryBadge();
+}
+
+function updateHistoryBadge() {
+  // no-op UI hint
+}
+
+function renderHistory() {
+  const empty   = document.getElementById('history-empty');
+  const content = document.getElementById('history-content');
+  const list    = document.getElementById('history-list');
+  const count   = document.getElementById('history-count');
+
+  if (!history.length) {
+    empty.style.display   = '';
+    content.style.display = 'none';
+    return;
+  }
+  empty.style.display   = 'none';
+  content.style.display = 'flex';
+  count.textContent     = `${history.length} hasil scan`;
+
+  list.innerHTML = history.map(item => {
+    const time = formatRelativeTime(item.scannedAt);
+    return `<div class="history-item" onclick="loadHistoryItem('${item.id}')">
+      <img class="history-thumb" src="${escAttr(item.imageDataUrl)}" alt="Scan thumbnail" onerror="this.style.background='var(--surface2)';this.src=''" />
+      <div class="history-item-info">
+        <div class="history-kanji">${escHtml(item.detected_text || '—')}</div>
+        <div class="history-translation">${escHtml(item.translation || '—')}</div>
+        <div class="history-time">${time}</div>
+      </div>
+      <button class="del-btn" onclick="deleteHistory('${item.id}', event)" title="Hapus">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6m4-6v6"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+}
+
+function loadHistoryItem(id) {
+  const item = history.find(h => h.id === id);
+  if (!item) return;
+  scanResult = {
+    detected_text: item.detected_text,
+    translation: item.translation,
+    segments: item.segments,
+    language_notes: item.language_notes,
+  };
+  currentPreviewDataUrl = item.imageDataUrl;
+  renderResult(scanResult);
+  switchTab('result');
+}
+
+function deleteHistory(id, event) {
+  event.stopPropagation();
+  history = history.filter(h => h.id !== id);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch {}
+  renderHistory();
+}
+
+function clearHistory() {
+  if (!confirm('Hapus semua riwayat scan?')) return;
+  history = [];
+  try { localStorage.removeItem(HISTORY_KEY); } catch {}
+  renderHistory();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function showError(msg) {
+  const box = document.getElementById('error-box');
+  document.getElementById('error-msg').textContent = msg;
+  box.style.display = '';
+}
+function hideError() {
+  document.getElementById('error-box').style.display = 'none';
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function escAttr(str) {
+  return String(str).replace(/"/g, '&quot;');
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return '';
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 60)    return 'Baru saja';
+  if (diff < 3600)  return `${Math.floor(diff/60)} menit lalu`;
+  if (diff < 86400) return `${Math.floor(diff/3600)} jam lalu`;
+  return `${Math.floor(diff/86400)} hari lalu`;
+}
+</script>
+</body>
+</html>
